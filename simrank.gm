@@ -1,0 +1,134 @@
+/*###############################################################################
+#							Similarity Ranking Algorithm 						#
+#								Jeh and Widom (2002)							#
+#																				#
+#					Implementation version with Green-Marl Language				#
+#					by Rui Sarmento												#
+#					for "Large Scale Social Network Analysis"					#
+#					Master Thesis - 2013										#
+#																				#
+################################################################################*/
+Proc simrank(G: Graph )
+{
+
+    [FILE *myfile];
+    Float C = 0.6;
+	Float s_uv = 0.0;
+	Int iter = 50;
+	Float eps = 0.0001;
+	[bool FLAG_CONV = false];
+	Int n_nodes = 0;
+	Node_Prop<Bool> Covered;
+	n_nodes = G.NumNodes();
+	G.Covered = False;
+	
+	[float** sim_df = new float*[$n_nodes]];
+	[float** sim_df_old = new float*[$n_nodes]];
+
+    [for(int i = 0; i < $n_nodes; i++) {
+        sim_df[i] = new float[$n_nodes];
+		sim_df_old[i] = new float[$n_nodes];
+    }];
+
+	//initialize matrices
+	Foreach(s:G.Nodes){
+		Foreach(t:G.Nodes){
+		[
+		if($s==$t){
+			sim_df[$s][$t]=1;
+			sim_df_old[$s][$t]=1;
+			sim_df[$t][$s]=1;
+			sim_df_old[$t][$s]=1;
+		}else{
+			sim_df[$s][$t]=0;
+			sim_df_old[$s][$t]=0;
+			sim_df[$t][$s]=0;
+			sim_df_old[$t][$s]=0;
+		}
+		];
+		}
+	}
+	
+	
+	Node_Prop<Int> numNbrs;
+	G.numNbrs = 0;
+	Int j = 0;
+	
+	While(j <= iter){
+	
+	[if (!FLAG_CONV) {FLAG_CONV=true;} else {break;}];//test convergence FLAG
+	
+	[for(int k = 0; k < $n_nodes;k++){
+	memcpy(sim_df_old[k], sim_df[k], sizeof(float) * $n_nodes);
+	}];
+	
+		Foreach(u: G.Nodes) {
+		u.numNbrs = u.NumInNbrs();
+			Foreach(v: G.Nodes){
+			[if ($u == $v) {
+			continue;
+			} else {
+			$s_uv=0.0;}];
+			v.numNbrs = v.NumInNbrs();
+				Foreach(n_u: u.InNbrs) 
+				{
+					Foreach(n_v: v.InNbrs){
+						[$s_uv = $s_uv + sim_df_old[$n_u][$n_v]];
+					}
+				}
+				[	if ($u.numNbrs==0 || $v.numNbrs==0) {
+						sim_df[$u][$v]=0;
+						sim_df[$v][$u]=0;
+					}else{
+						sim_df[$u][$v] = ($C * $s_uv) / (float)(($u.numNbrs)*($v.numNbrs));
+						sim_df[$v][$u] = sim_df[$u][$v];}
+						if(sim_df[$u][$v] - sim_df_old[$u][$v] >= $eps || sim_df[$v][$u] - sim_df_old[$v][$u] >= $eps){
+							FLAG_CONV=false;
+						} //if there is no convergence in any value of simrank then FLAG_CONV=FALSE
+				];
+			}
+		}
+	j = j+1;
+	}
+
+// TO DO - Write csv file with simrank between all nodes (equivalent to square matrix)
+// TO DO - Write file with top 10 of similarity ranking for all nodes  
+G.Covered=False;
+[myfile=fopen("results-simrank-raw.txt","a")];
+[char buffer[100]];
+Int line = 1;
+For(s:G.Nodes){
+[if (myfile !=NULL && $line == 1){
+	sprintf(buffer,"\t");
+	fputs(buffer,myfile);
+	
+}];
+For(u:G.Nodes){
+[if (myfile !=NULL && $line == 1){
+	sprintf(buffer,"%i\t",$u);
+	fputs(buffer,myfile);
+	
+}];
+}
+If(line == 1){
+[sprintf(buffer,"\n")];
+[fputs(buffer,myfile)];
+}
+line = 0;
+[if (myfile !=NULL){
+	sprintf(buffer,"%i\t",$s);
+	fputs(buffer,myfile);
+	
+} else {puts("Unable to open file results-simrank-raw.txt");}];
+For(t:G.Nodes){
+[if (myfile !=NULL){
+	sprintf(buffer,"%1.6f\t",sim_df[$s][$t]);
+	fputs(buffer,myfile);
+	
+} else {puts("Unable to open file results-simrank-raw.txt");}]; 
+}
+[sprintf(buffer,"\n")];
+[fputs(buffer,myfile)];
+}
+[fclose(myfile)];
+}

@@ -1,0 +1,288 @@
+/*###############################################################################
+#					Community Label Propagation Algorithm 						#
+#						from Soman and Narang (2011).							#
+#																				#
+#					Implementation version with Green-Marl Language				#
+#					by Rui Sarmento												#
+#					for "Large Scale Social Network Analysis"					#
+#					Master Thesis - 2013										#
+#																				#
+################################################################################*/
+Proc label_node_1(G: Graph, Gaux: Graph, EWN: Node_Prop<Float>(G), COMM: Node_Prop<Int>(G), EW: E_P<Float>(G)) //: Int
+{
+	N_P<Bool>(G) Covered;
+
+    // Compute Edge-Weight
+	[printf("\nProcessing...Computing Graph Edges Weight!")];
+    Foreach(s: G.Nodes) {
+		G.Covered = False;
+		Int counting = 0;
+		Foreach(x: s.OutNbrs){
+			Foreach(y: x.OutNbrs)(!y.Covered){
+			If(y.HasEdgeTo(s))
+			counting ++;
+			}
+		x.Covered = True;
+		}
+        
+		Foreach (t: s.Nbrs) {
+            Int triangles = 0;
+            Foreach (u: s.Nbrs) {
+                If (t.HasEdgeTo(u)) {
+                    triangles ++;
+					//[printf("\nOn node %i - neighbour %i has edge to neighbour %i",$s,$t,$u)];
+                }
+            }
+            Edge(G) e = t.ToEdge();
+            e.EW = (triangles == 0) ? 0 : counting / (Float) triangles;
+			//[printf("\n Node %i to %i - counting = %i - Triangles = %i - Edge weight = %f",$s,$t,$counting,$triangles,$e.EW)];
+        }
+    }
+
+    // Initialize
+    Edge_Prop<Bool>(G) VC;
+	Node_Prop<Int>(G) membership;
+	Node_Prop<Bool>(G) Covered2;
+    G.Covered2 = False;
+    G.EWN = 0;
+	Int counter = 0;
+	
+	//has to be sequential to be respectful to node sequence
+	[printf("\nProcessing...Setting Initial Community Labels for every node!")];
+    For(n: G.Nodes) {
+        n.COMM = counter; //Community initiation - each node belongs to its community
+		counter++;
+    }
+    G.VC = False;
+
+    // Cover & Compute EWN
+    // Sequential Execution
+    // (becomes non-deterministic if parallelized)
+	[printf("\nProcessing...Computing Graph Maximum Neighbor's Edge Weight and for every node!")];
+    Foreach (s:G.Nodes)(!s.Covered2) {
+        Edge(G) e_sel = NIL;
+        Float maxval = -1;
+        Node(G) from, to;
+
+        Foreach(t: s.OutNbrs) {
+            Edge(G) e1 = t.ToEdge();
+            <maxval; from, to, e_sel> max= <e1.EW; s, t, e1> @t;
+        }
+        // there can be nodes that has no edges
+        If (e_sel!= NIL) {
+            e_sel.VC = True;
+            from.Covered2 = True;
+            //to.Covered2 = True;
+            s.EWN = maxval;
+        }
+    }
+    
+	//Gaux has no edges yet, just nodes, lets add edges
+	//has to be sequential or else it makes segmentation fault
+    [printf("\nProcessing...Computing/Creating Auxiliary Graph Edges!")];
+	For(n:G.Nodes){
+		For(v: n.OutNbrs) (v.EWN==n.EWN){
+            //To do 
+			Edge(G) e2 = v.ToEdge();
+			If(e2.EW != 0){
+				[Gaux.add_edge($v,$n)];
+				//[Gaux.add_edge($n,$v)];
+				//[printf("\nAdded edge %i to %i, %f = %f",$v,$n,$v.EWN,$n.EWN)];
+			}
+		}
+	}	
+	
+}
+
+Proc label_node_2(G: Graph, Gaux: Graph, COMM: Node_Prop<Int>(Gaux)) //: Int
+{
+	
+	//To do Find connected components in Gaux
+	[printf("\nProcessing...Computing Auxiliary Graph Kosaraju Strong Connected Components!")];
+	//Kosaraju connected components initialization
+	Node_Prop<Int>(Gaux) mem;
+	// Initialize membership
+    Gaux.mem = -1;
+
+    N_P<Bool>(Gaux) Checked;
+    Gaux.Checked = False;
+
+    // [Phase 1]
+    // Obtain reverse-post-DFS-order of node sequence.
+    // Node_Order can be also used here but Node_Seq is faster
+    Node_Seq(Gaux) Seq; 
+    For(t:Gaux.Nodes) (!t.Checked)
+    {
+        InDFS(n:Gaux.Nodes From t)[!n.Checked] 
+        {} // do nothing at pre-visit
+        InPost{ // check at post-visit
+            n.Checked = True;
+            Seq.PushFront(n);
+        }
+    }
+
+    // [Phase 2]
+    // Starting from each node in the sequence
+    //   Do BFS on the transposed graph G^.
+    //   and every nodes that are (newly) visited compose one SCC.
+    Int compId = 0;
+	Map<Int,Int> Node_community;
+    For(t:Seq.Items)(t.mem == -1)
+    {
+        InBFS(n:Gaux^.Nodes From t)[n.mem == -1] 
+        {
+            
+			n.mem = compId;
+			//[printf("\n Node %i member of component %i",$n,$n.mem)];
+				
+        }
+        compId++;
+    }	
+	
+	
+	//Label each component nodes with the lower label of community
+	[printf("\nProcessing...Labeling each node in component with its lower label!")];
+	Int comp_aux_label = 0;
+	Int mem_aux = -1;
+	N_P<Bool>(Gaux) Checked2;
+	Gaux.Checked2=False;
+	Foreach(s:Gaux.Nodes)(!s.Checked2){	
+		If(mem_aux != s.mem){
+			comp_aux_label = s.COMM; //New component, from now on this label will be the same for all nodes in this new component
+			Foreach(t:Gaux.Nodes)(t.mem==s.mem && !t.Checked2){
+				t.COMM=comp_aux_label;
+				//[printf("\nProcedure 2 - Node %i member of community %i",$t,$t.COMM)];
+				t.Checked2=True;
+			}
+		}
+	mem_aux = s.mem;
+	s.Checked2 = True;
+    }
+
+}
+
+Proc label_node_3(G: Graph, Gaux: Graph, calc_mod: Int, EWN: Node_Prop<Float>(G), COMM: Node_Prop<Int>(G), EW: Edge_Prop<Float>(G)) //: Int
+{
+
+[FILE *myfile];
+[myfile=fopen("results-raw.txt","a")];	
+Edge_Prop<Bool>(G) VC;
+
+// Initialize before converging loop
+Bool Converged = False;
+N_P<Int>(G) prev_COMM;
+N_P<Int>(G) prev_prev_COMM;
+G.prev_COMM = -1;
+G.prev_prev_COMM = -1;
+Int iter = 0;
+ 
+While(!Converged && iter < 10){
+iter = iter + 1;
+[printf("\nAlgorithm Iteration %i", $iter)];
+Converged=True;
+ 
+//Calculate total degree of members of the same community
+Map<Int,Int> communityDegree;
+
+Foreach(n: G.Nodes) {
+		Int d = n.OutDegree();
+		communityDegree[n.COMM] += d;
+		//[printf("\nProcedure 3 - Node %i on community %i", $n,$n.COMM)];
+}
+
+ // Initialize
+ Node_Prop<Float>(G) labelWeight;
+ Node_Prop<Bool>(G) Covered;
+ G.labelWeight = -1;
+ 
+ Int CommDegree = 0;
+ Int nedges = G.NumEdges();
+ //[printf("\nNumber of Edges: %i",$nedges)];
+ 
+ //Calculate labelWeight depending of size of community
+ Foreach(s:G.Nodes){
+	CommDegree = communityDegree[s.COMM];
+	s.labelWeight = (1 - (CommDegree)/(Float)(2*nedges));
+	//[printf("\nCD for Node %i and community %i: %i - LabelWeight: %.2f",$s,$s.COMM,CommDegree,$s.labelWeight)];
+ }
+ 
+ //Initialize vars to final step of algorithm - node final label
+ G.Covered = False;
+ G.VC = False;
+ Map<Int,Float> TEW_COMM; //Total edge weight of intra communities nodes
+
+	// Cover & Compute COMM label
+    // Sequential Execution
+    // (becomes non-deterministic if parallelized)
+	For(s: G.Nodes)(!s.Covered) { // Choose an edge that has maximum edge weight
+	Edge(G) e_sel1 = NIL;
+    Float maxval1 = -1;
+    Node(G) from1, to1;
+	TEW_COMM.Clear();
+		
+		Foreach(r: s.OutNbrs){
+		//Edge(G) e = r.ToEdge();
+		TEW_COMM[r.COMM] += r.EWN;
+		//TEW_COMM[r.COMM] += e.EW;
+		}
+				
+		For(t: s.OutNbrs){ // value among remaining nodes
+		Edge(G) e2 = t.ToEdge();
+		//Edge(G) e1 = t.ToEdge();
+		
+		//<maxval1; from1, to1, e_sel1> max= <t.labelWeight * t.EWN; s, t, e1> @s;//@s??
+		<maxval1; from1, to1, e_sel1> max= <t.labelWeight * TEW_COMM[t.COMM]; s, t, e2> @t;
+		}
+	
+	If (e_sel1!= NIL) {
+            e_sel1.VC = True;
+            from1.Covered = True;
+            to1.Covered = True;
+			s.prev_prev_COMM = s.prev_COMM;//save previous to previous COMMUNITY
+			s.prev_COMM= s.COMM;//save previous COMMUNITY
+            s.COMM = to1.COMM;
+			//If((s.COMM != s.prev_COMM) && (s.COMM == s.prev_prev_COMM)){Converged=False;}
+			If(s.COMM != s.prev_COMM && s.prev_COMM != s.prev_prev_COMM){Converged=False;}
+       }
+	}
+
+}
+
+N_P<Bool>(G) Covered2;
+G.Covered2 = False;
+For(s: G.Nodes)(!s.Covered2){
+[char buffer[100]];
+[if (myfile != NULL){
+	sprintf(buffer,"%i\t%i\r\n",$s,$s.COMM);
+	fputs(buffer,myfile);
+} else throw("Unable to open file results-raw.txt")]; 
+s.Covered2=True;
+}
+[fclose(myfile)];
+
+
+	If (calc_mod == 1){
+	//Calculate Modularity - Modularity algorithm
+	[printf("\nCalculating Modularity. Please Wait...")];
+	// Initialize
+    Node_Prop<Bool>(G) Covered3;
+	G.Covered3 = False;
+	Float Mod = 0.0;
+		
+		Foreach(u:G.Nodes)(!u.Covered3)
+		{
+            Foreach(v:G.Nodes)(v.COMM == u.COMM && v!=u){
+			
+				If (u.HasEdgeTo(v)){
+					Mod += 1 - (u.NumNbrs()*v.NumNbrs())/(2*G.NumEdges()); //New_deg[u]
+				} Else {
+					Mod +=  -(u.NumNbrs()*v.NumNbrs())/(2*G.NumEdges()); //New_deg[u]
+				}
+			}
+		u.Covered3 = True;
+		}
+	Mod = Mod/(2*G.NumEdges()); //Because we duplicated number of edges on graph input, other way it would have to be 2*G.NumEdges???
+	[printf("\nModularity: %f", Mod)];
+    //print "Modularity: %f" % Mod
+	}
+}
